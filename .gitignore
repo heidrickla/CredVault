@@ -1,0 +1,14 @@
+# .NET build output
+bin/
+obj/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+
+# Rider
+.idea/
+
+# Local settings (also stored in %AppData%, never a secret, but ignore any stray copies)
+settings.json
