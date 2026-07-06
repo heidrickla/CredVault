@@ -1,0 +1,9 @@
+# Client-side secret-scanning guard: blocks a hardcoded secret before it can be committed.
+# The earliest layer of the "Publishing a Repo to Public" checklist; complements
+# GitHub push protection (enabled server-side on this repo).
+# Activate locally once:  pip install pre-commit && pre-commit install
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
