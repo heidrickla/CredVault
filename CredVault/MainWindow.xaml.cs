@@ -241,6 +241,12 @@ public partial class MainWindow : Window
         ErrorText.Visibility = Visibility.Collapsed;
     }
 
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+        WindowTheming.ApplyDarkTitleBar(this);
+    }
+
     protected override void OnClosing(CancelEventArgs e)
     {
         // Intentionally does NOT persist the current command box text: only a

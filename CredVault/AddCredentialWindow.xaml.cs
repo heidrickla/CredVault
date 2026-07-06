@@ -1,5 +1,6 @@
 using System.Security;
 using System.Windows;
+using CredVault.Native;
 
 namespace CredVault;
 
@@ -31,6 +32,12 @@ public partial class AddCredentialWindow : Window
         NameBox.IsEnabled = false;
         SecretLabel.Text = "New secret value (replaces the stored one)";
         Loaded += (_, _) => SecretBox.Focus();
+    }
+
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+        WindowTheming.ApplyDarkTitleBar(this);
     }
 
     private void Save_Click(object sender, RoutedEventArgs e)
