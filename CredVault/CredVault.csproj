@@ -12,4 +12,8 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
 
+  <ItemGroup>
+    <Resource Include="Assets\background.png" />
+  </ItemGroup>
+
 </Project>
