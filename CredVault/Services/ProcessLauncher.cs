@@ -59,8 +59,9 @@ public static class ProcessLauncher
         // Guardrail 2: refuse before doing anything else if any stored
         // credential's value was typed/pasted onto the command line. Scanning
         // ALL stored credentials (not only the selected ones) also covers a
-        // value pasted for an unchecked credential. Each value is read one at a
-        // time and never logged; the exception carries only the name.
+        // value pasted for an unchecked credential. Backed by CredentialCache
+        // (values held encrypted); nothing is logged and the exception carries
+        // only the name.
         RejectSecretsOnCommandLine(commandLine);
 
         var startInfo = new ProcessStartInfo
@@ -137,17 +138,12 @@ public static class ProcessLauncher
 
     private static void RejectSecretsOnCommandLine(string commandLine)
     {
-        foreach (var storedName in CredentialManager.List())
-        {
-            if (!CredentialManager.TryRead(storedName, out var secret) || secret is null)
-                continue;
-
-            var plain = ToPlainString(secret);
-            secret.Dispose();
-
-            if (plain.Length > 0 && commandLine.Contains(plain, StringComparison.Ordinal))
-                throw new SecretInCommandLineException(storedName);
-        }
+        // Scans all stored credentials via the cache (values held encrypted as
+        // SecureString, decrypted only momentarily here) so we avoid a
+        // Credential Manager round-trip per credential on every launch.
+        var hit = CredentialCache.FindValueIn(commandLine);
+        if (hit is not null)
+            throw new SecretInCommandLineException(hit);
     }
 
     private static (string fileName, string arguments) SplitCommand(string commandLine)

@@ -21,6 +21,13 @@ public static class CredentialManager
     private const int ERROR_NOT_FOUND = 1168;
     private const string Prefix = "CredVault:";
 
+    /// <summary>
+    /// Raised after this app successfully creates, overwrites, or deletes a
+    /// credential. Used to invalidate in-memory caches so they never serve a
+    /// stale value for a change made through this app.
+    /// </summary>
+    public static event Action? CredentialsChanged;
+
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct CREDENTIAL
     {
@@ -75,7 +82,10 @@ public static class CredentialManager
                 UserName = userNamePtr
             };
 
-            return CredWriteW(ref credential, 0);
+            var ok = CredWriteW(ref credential, 0);
+            if (ok)
+                CredentialsChanged?.Invoke();
+            return ok;
         }
         finally
         {
@@ -121,7 +131,10 @@ public static class CredentialManager
     public static bool Delete(string name)
     {
         if (CredDeleteW(Prefix + name, CRED_TYPE_GENERIC, 0))
+        {
+            CredentialsChanged?.Invoke();
             return true;
+        }
 
         // Treat "already gone" as success.
         return Marshal.GetLastWin32Error() == ERROR_NOT_FOUND;
