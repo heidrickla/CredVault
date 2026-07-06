@@ -16,6 +16,15 @@ public sealed class AppSettings
 {
     public string LastCommand { get; set; } = string.Empty;
 
+    /// <summary>
+    /// SHA-256 (hex) of each executable previously launched, keyed by
+    /// lower-cased absolute path. Used as a change tripwire: if the binary
+    /// at a known path hashes differently on the next launch, the user is
+    /// asked to confirm before any secret is injected. Hashes identify
+    /// public binaries - they are not secrets.
+    /// </summary>
+    public Dictionary<string, string> KnownExecutableHashes { get; set; } = new();
+
     private static string SettingsPath
     {
         get

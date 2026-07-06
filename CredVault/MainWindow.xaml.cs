@@ -126,7 +126,21 @@ public partial class MainWindow : Window
 
         try
         {
-            var process = ProcessLauncher.Launch(CommandBox.Text, selected, AppendLog);
+            // Phase 1: resolve, pin, hash, and signature-check the target -
+            // no secret has been read yet at this point.
+            using var plan = ProcessLauncher.Prepare(CommandBox.Text);
+
+            // Change tripwire: if this executable hashed differently the
+            // last time it was launched, confirm before injecting anything.
+            if (!ConfirmIfExecutableChanged(plan))
+            {
+                AppendLog($"launch aborted by user: executable changed since last launch");
+                ResetAfterFailedLaunch();
+                return;
+            }
+
+            // Phase 2: secrets are read and injected only now.
+            var process = ProcessLauncher.Launch(plan, selected, AppendLog);
             _runningProcess = process;
             process.Exited += (_, _) => Dispatcher.Invoke(() =>
             {
@@ -139,6 +153,7 @@ public partial class MainWindow : Window
 
             // Persist the command line only after it cleared the secret check
             // and actually started - so a rejected command is never written.
+            RememberExecutable(plan);
             PersistCommand();
         }
         catch (SecretInCommandLineException ex)
@@ -149,6 +164,14 @@ public partial class MainWindow : Window
             ShowError($"The command line contains the stored value of '{ex.CredentialName}'. " +
                       "Remove it and reference the credential by its name instead - " +
                       "it is injected as an environment variable.");
+            ResetAfterFailedLaunch();
+        }
+        catch (TamperedExecutableException)
+        {
+            // The image is signed but its digest no longer matches: it was
+            // modified after signing. Never inject into it.
+            ShowError("The target executable failed its signature integrity check - " +
+                      "it was modified after being signed. Launch refused.");
             ResetAfterFailedLaunch();
         }
         catch (Win32Exception ex)
@@ -178,6 +201,35 @@ public partial class MainWindow : Window
         // command that contains a stored secret value), so it is safe to save.
         _settings.LastCommand = CommandBox.Text;
         _settings.Save();
+    }
+
+    /// <summary>
+    /// Returns false when the executable at this path hashed differently on a
+    /// previous launch and the user declines to proceed. First-time paths are
+    /// allowed silently (their hash is recorded after a successful start).
+    /// </summary>
+    private bool ConfirmIfExecutableChanged(LaunchPlan plan)
+    {
+        var key = plan.ResolvedPath.ToLowerInvariant();
+        if (!_settings.KnownExecutableHashes.TryGetValue(key, out var known) || known == plan.Sha256)
+            return true;
+
+        var choice = MessageBox.Show(this,
+            "The executable has changed since you last launched it:\n\n" +
+            $"{plan.ResolvedPath}\n\n" +
+            "If you didn't update this program yourself, it may have been " +
+            "replaced by something malicious. Launch it and inject the " +
+            "selected credentials anyway?",
+            "CredVault - executable changed",
+            MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+
+        return choice == MessageBoxResult.Yes;
+    }
+
+    private void RememberExecutable(LaunchPlan plan)
+    {
+        _settings.KnownExecutableHashes[plan.ResolvedPath.ToLowerInvariant()] = plan.Sha256;
+        // Persisted by the PersistCommand() call that follows a launch.
     }
 
     private void ResetAfterFailedLaunch()

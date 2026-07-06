@@ -83,11 +83,24 @@ mistake doesn't quietly leak a secret:
    environment-variable names (no `=`, whitespace, or control characters),
    and names of loader-/security-sensitive variables (`PATH`, `COMSPEC`,
    CLR profiler hooks, …) are refused outright.
-4. **Executable search hardening.** The current working directory is removed
-   from the child executable search path (`NoDefaultCurrentDirectoryInExePath`),
-   so a malicious exe dropped in the CWD can't be picked up by a bare command
-   name and handed the injected secrets. Native P/Invoke libraries resolve
-   from System32 only.
+4. **Executable search hardening.** Bare command names resolve through an
+   explicit search order (System32 → Windows → absolute `PATH` entries) that
+   never includes the current or application directory, so a planted exe
+   can't be picked up by a bare command name and handed the injected
+   secrets. (`NoDefaultCurrentDirectoryInExePath` is also set as defense in
+   depth.) Native P/Invoke libraries resolve from System32 only.
+5. **Pinned, verified launch (indirect launch).** Launching is two-phase.
+   Before any secret is read, the resolved executable is *pinned* with a
+   read handle so it cannot be modified, deleted, or renamed between
+   verification and `CreateProcess` (closing the TOCTOU window); its
+   SHA-256 is logged and compared against the last launch of the same path,
+   prompting for confirmation if the binary changed; and its Authenticode
+   signature is checked — a signed image whose digest no longer matches
+   (modified after signing) is refused outright. Unsigned executables are
+   allowed (most dev tools are unsigned) but labeled in the log. Secrets
+   are injected only after all of this passes. Note: this verifies the
+   executable image, not script arguments — `pwsh -File test.ps1` verifies
+   `pwsh.exe`; the script is your own test code.
 
 ## Security notes / caveats
 

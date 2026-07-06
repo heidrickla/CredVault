@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.IO;
 using CredVault.Native;
 using CredVault.Services;
 using static CredVault.Tests.TestSupport;
@@ -152,6 +153,79 @@ public class ProcessLauncherTests
             ProcessLauncher.Launch(@"C:\definitely\not\here\nope.exe", Array.Empty<string>(), _ => { }));
 
         Assert.Equal(2, ex.NativeErrorCode); // ERROR_FILE_NOT_FOUND
+    }
+
+    [Fact]
+    public void Launch_logs_resolved_path_hash_and_signature()
+    {
+        var log = RunAndCollect("cmd /c exit 0");
+
+        Assert.Contains(log, l => l.StartsWith("resolved executable:")
+                                  && l.Contains(@"\cmd.exe", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(log, l => l.StartsWith("image sha256: ") && l.Length >= 64);
+        Assert.Contains(log, l => l.StartsWith("signature:"));
+    }
+
+    [Fact]
+    public void Prepare_pins_the_executable_against_modification_until_released()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), $"credvault-pin-{Guid.NewGuid():N}.exe");
+        File.Copy(Path.Combine(Environment.SystemDirectory, "cmd.exe"), temp);
+        try
+        {
+            var plan = ProcessLauncher.Prepare($"\"{temp}\" /c exit 0");
+            Assert.Equal(temp, plan.ResolvedPath, ignoreCase: true);
+
+            // While the plan is alive the binary cannot be modified or
+            // deleted - the TOCTOU window between verify and launch is shut.
+            Assert.Throws<IOException>(() => File.OpenWrite(temp).Dispose());
+            Assert.ThrowsAny<IOException>(() => File.Delete(temp));
+
+            plan.Dispose();
+
+            // Released: writable again.
+            File.OpenWrite(temp).Dispose();
+        }
+        finally
+        {
+            File.Delete(temp);
+        }
+    }
+
+    [Fact]
+    public void Prepare_refuses_a_tampered_signed_executable()
+    {
+        // Needs an embedded-Authenticode-signed binary; dotnet.exe (always
+        // present on this dev box - it runs this test suite) qualifies.
+        var source = (Environment.GetEnvironmentVariable("PATH") ?? string.Empty).Split(';')
+            .Select(p => p.Trim())
+            .Where(p => p.Length > 0 && Path.IsPathRooted(p))
+            .Select(p => Path.Combine(p, "dotnet.exe"))
+            .FirstOrDefault(File.Exists);
+        Assert.False(source is null, "dotnet.exe not found on PATH - cannot exercise the tamper check");
+
+        var temp = Path.Combine(Path.GetTempPath(), $"credvault-tamper-{Guid.NewGuid():N}.exe");
+        File.Copy(source!, temp);
+        try
+        {
+            // Flip one byte in the middle of the image: the embedded
+            // signature's digest no longer matches the file.
+            using (var fs = new FileStream(temp, FileMode.Open, FileAccess.ReadWrite))
+            {
+                fs.Position = fs.Length / 2;
+                var original = fs.ReadByte();
+                fs.Position = fs.Length / 2;
+                fs.WriteByte((byte)(original ^ 0xFF));
+            }
+
+            var ex = Assert.Throws<TamperedExecutableException>(() =>
+                ProcessLauncher.Prepare($"\"{temp}\""));
+            Assert.Equal(temp, ex.ExecutablePath, ignoreCase: true);
+        }
+        finally
+        {
+            File.Delete(temp);
+        }
     }
 
     [Fact]
