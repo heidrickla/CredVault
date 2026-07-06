@@ -7,11 +7,15 @@
         FontFamily="Segoe UI" FontSize="13">
 
     <Grid>
-        <!-- Fit the whole graphic (Uniform) so both the top shield and the
-             bottom figure stay visible; the tall source leaves slim dark
-             side margins that blend with the artwork's near-black edges. -->
-        <Image Source="Assets/background.png" Stretch="Uniform"
-               HorizontalAlignment="Center" VerticalAlignment="Stretch"/>
+        <!-- Cover-fit the artwork: scale to fill the window height so the top
+             shield and bottom figure stay anchored in frame, centered, with
+             any excess width auto-cropped at the sides. -->
+        <Rectangle>
+            <Rectangle.Fill>
+                <ImageBrush ImageSource="Assets/background.png" Stretch="UniformToFill"
+                            AlignmentX="Center" AlignmentY="Center"/>
+            </Rectangle.Fill>
+        </Rectangle>
 
         <!-- Vertical gradient scrim: lighter at the top and bottom edges so
              the shield and the figure both read through, darker through the
