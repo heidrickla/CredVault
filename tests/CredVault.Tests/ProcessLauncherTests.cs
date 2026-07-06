@@ -67,6 +67,22 @@ public class ProcessLauncherTests
     }
 
     [Fact]
+    public void Guardrail_rejects_value_of_an_unselected_credential_on_the_command_line()
+    {
+        using var cred = NewCredentialName();
+        CredentialManager.Save(cred.Name, Secure(SecretValue));
+
+        // The credential's value is on the command line but the credential is
+        // NOT passed as selected - it must still be caught (all stored
+        // credentials are scanned).
+        var ex = Assert.Throws<SecretInCommandLineException>(() =>
+            ProcessLauncher.Launch($"cmd /c echo {SecretValue}", Array.Empty<string>(), _ => { }));
+
+        Assert.Equal(cred.Name, ex.CredentialName);
+        Assert.DoesNotContain(SecretValue, ex.Message);
+    }
+
+    [Fact]
     public void Missing_executable_throws_file_not_found_Win32Exception()
     {
         var ex = Assert.Throws<Win32Exception>(() =>

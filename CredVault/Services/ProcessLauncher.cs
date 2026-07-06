@@ -40,11 +40,13 @@ public sealed class SecretInCommandLineException : Exception
 ///     CredVault's log. (Partial/split-across-lines matches can still
 ///     slip through - this reduces the risk, it is not a guarantee.)
 ///
-///  2. Command-line secret rejection - if a selected credential's literal
+///  2. Command-line secret rejection - if ANY stored credential's literal
 ///     value appears in the command line, the launch is refused before the
 ///     process starts. That both prevents the value reaching the child's
 ///     command line (visible in Task Manager / WMI to other processes) and
 ///     stops it being written to the persisted last-command settings file.
+///     All stored credentials are checked (not just the selected ones), so a
+///     value pasted for an unchecked credential is caught too.
 /// </summary>
 public static class ProcessLauncher
 {
@@ -53,6 +55,13 @@ public static class ProcessLauncher
     public static Process Launch(string commandLine, IReadOnlyList<string> credentialNames, Action<string> onOutput)
     {
         var (fileName, arguments) = SplitCommand(commandLine);
+
+        // Guardrail 2: refuse before doing anything else if any stored
+        // credential's value was typed/pasted onto the command line. Scanning
+        // ALL stored credentials (not only the selected ones) also covers a
+        // value pasted for an unchecked credential. Each value is read one at a
+        // time and never logged; the exception carries only the name.
+        RejectSecretsOnCommandLine(commandLine);
 
         var startInfo = new ProcessStartInfo
         {
@@ -81,12 +90,6 @@ public static class ProcessLauncher
 
             var plain = ToPlainString(secret);
             secret.Dispose();
-
-            // Guardrail 2: refuse if the secret value was typed on the command
-            // line. Reference it by name instead. We abort before Start() and
-            // before the caller persists the command.
-            if (plain.Length > 0 && commandLine.Contains(plain, StringComparison.Ordinal))
-                throw new SecretInCommandLineException(name);
 
             startInfo.Environment[name] = plain;
             if (plain.Length > 0)
@@ -130,6 +133,21 @@ public static class ProcessLauncher
         onOutput($"child process started, pid {process.Id}");
 
         return process;
+    }
+
+    private static void RejectSecretsOnCommandLine(string commandLine)
+    {
+        foreach (var storedName in CredentialManager.List())
+        {
+            if (!CredentialManager.TryRead(storedName, out var secret) || secret is null)
+                continue;
+
+            var plain = ToPlainString(secret);
+            secret.Dispose();
+
+            if (plain.Length > 0 && commandLine.Contains(plain, StringComparison.Ordinal))
+                throw new SecretInCommandLineException(storedName);
+        }
     }
 
     private static (string fileName, string arguments) SplitCommand(string commandLine)
