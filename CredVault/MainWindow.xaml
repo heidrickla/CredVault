@@ -3,17 +3,29 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="CredVault" Height="640" Width="480"
         Foreground="{StaticResource TextPrimaryBrush}"
+        Background="#FF070A12"
         FontFamily="Segoe UI" FontSize="13">
-    <Window.Background>
-        <!-- Scale-to-fill and crop; anchored to the top so the shield /
-             keyhole stays in frame at the app's shorter aspect ratio. -->
-        <ImageBrush ImageSource="Assets/background.png"
-                    Stretch="UniformToFill" AlignmentY="Top"/>
-    </Window.Background>
 
     <Grid>
-        <!-- Dark scrim over the artwork so controls and text stay legible. -->
-        <Rectangle Fill="#A6080B14"/>
+        <!-- Fit the whole graphic (Uniform) so both the top shield and the
+             bottom figure stay visible; the tall source leaves slim dark
+             side margins that blend with the artwork's near-black edges. -->
+        <Image Source="Assets/background.png" Stretch="Uniform"
+               HorizontalAlignment="Center" VerticalAlignment="Stretch"/>
+
+        <!-- Vertical gradient scrim: lighter at the top and bottom edges so
+             the shield and the figure both read through, darker through the
+             middle band where the dense text and controls live. -->
+        <Rectangle>
+            <Rectangle.Fill>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                    <GradientStop Color="#4D070A12" Offset="0.0"/>
+                    <GradientStop Color="#B3070A12" Offset="0.35"/>
+                    <GradientStop Color="#B3070A12" Offset="0.68"/>
+                    <GradientStop Color="#4D070A12" Offset="1.0"/>
+                </LinearGradientBrush>
+            </Rectangle.Fill>
+        </Rectangle>
 
         <Grid Margin="16">
             <Grid.RowDefinitions>
@@ -82,7 +94,7 @@
             </StackPanel>
 
             <TextBox Grid.Row="4" x:Name="LogBox" Margin="0,16,0,0" FontFamily="Consolas" FontSize="11"
-                      Background="#CC0C0F17" Foreground="{StaticResource TextMutedBrush}"
+                      Background="#990C0F17" Foreground="{StaticResource TextMutedBrush}"
                       IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
                       AcceptsReturn="True"/>
         </Grid>
