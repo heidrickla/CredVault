@@ -83,6 +83,28 @@ public class ProcessLauncherTests
     }
 
     [Fact]
+    public void Guardrail_reflects_an_in_app_value_edit_not_a_stale_cache()
+    {
+        using var cred = NewCredentialName();
+        CredentialManager.Save(cred.Name, Secure("old-value-abc"));
+
+        // Prime the cache: a launch that scans (and caches) the current value.
+        RunAndCollect("cmd /c exit");
+
+        // Overwrite the value in-app; this must invalidate the cache.
+        CredentialManager.Save(cred.Name, Secure("new-value-xyz"));
+
+        // The guardrail must catch the NEW value (proving the cache refreshed)...
+        var ex = Assert.Throws<SecretInCommandLineException>(() =>
+            ProcessLauncher.Launch("cmd /c echo new-value-xyz", Array.Empty<string>(), _ => { }));
+        Assert.Equal(cred.Name, ex.CredentialName);
+
+        // ...and the old value must no longer trip it (it is gone from the store).
+        var log = RunAndCollect("cmd /c echo old-value-abc");
+        Assert.Contains(log, l => l.Contains("child process started"));
+    }
+
+    [Fact]
     public void Missing_executable_throws_file_not_found_Win32Exception()
     {
         var ex = Assert.Throws<Win32Exception>(() =>
