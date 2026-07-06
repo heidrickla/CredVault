@@ -59,9 +59,9 @@ public static class ProcessLauncher
         // Guardrail 2: refuse before doing anything else if any stored
         // credential's value was typed/pasted onto the command line. Scanning
         // ALL stored credentials (not only the selected ones) also covers a
-        // value pasted for an unchecked credential. Backed by CredentialCache
-        // (values held encrypted); nothing is logged and the exception carries
-        // only the name.
+        // value pasted for an unchecked credential. Backed by CredentialCache,
+        // which retains only one-way HMAC fingerprints - no values; nothing is
+        // logged and the exception carries only the name.
         RejectSecretsOnCommandLine(commandLine);
 
         var startInfo = new ProcessStartInfo
@@ -97,6 +97,11 @@ public static class ProcessLauncher
                 redactions.Add(plain);
             onOutput($"injected {name} (value hidden)");
         }
+
+        // Redact longest-first: if one secret is a substring of another,
+        // replacing the shorter one first would break the longer match and
+        // leave its remainder visible in the output.
+        redactions.Sort(static (a, b) => b.Length.CompareTo(a.Length));
 
         // Guardrail 1: scrub injected values out of every output line.
         string Scrub(string line)
@@ -138,9 +143,9 @@ public static class ProcessLauncher
 
     private static void RejectSecretsOnCommandLine(string commandLine)
     {
-        // Scans all stored credentials via the cache (values held encrypted as
-        // SecureString, decrypted only momentarily here) so we avoid a
-        // Credential Manager round-trip per credential on every launch.
+        // Scans all stored credentials via the fingerprint cache (one-way
+        // HMACs, no retained values) so we avoid a Credential Manager
+        // round-trip per credential on every launch.
         var hit = CredentialCache.FindValueIn(commandLine);
         if (hit is not null)
             throw new SecretInCommandLineException(hit);

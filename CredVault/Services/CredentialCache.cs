@@ -1,30 +1,39 @@
 using System.Runtime.InteropServices;
 using System.Security;
+using System.Security.Cryptography;
 using CredVault.Native;
 
 namespace CredVault.Services;
 
 /// <summary>
-/// Process-lifetime cache of stored credential values, held as
-/// <see cref="SecureString"/> (encrypted in memory on Windows) so plaintext is
-/// only ever materialized momentarily during a scan. It lets the command-line
-/// secret guardrail check every stored credential without a Credential Manager
-/// (LSASS) round-trip on each launch.
+/// Process-lifetime fingerprint cache backing the command-line secret
+/// guardrail. It retains NO credential values in any form - not even
+/// encrypted. Each value is reduced to an HMAC-SHA256 fingerprint keyed with
+/// a random per-process key, plus its character length. Fingerprints are
+/// one-way: a memory dump of this cache reveals nothing about the secrets.
 ///
-/// SECURITY:
-///  - Values are cached encrypted (SecureString), never as plaintext, and are
-///    never logged or persisted.
-///  - The cache is fully invalidated whenever this app creates, overwrites, or
-///    deletes a credential (via <see cref="CredentialManager.CredentialsChanged"/>),
-///    and every scan reconciles names against the store, so in-app additions,
-///    edits, and removals are always reflected.
-///  - Residual gap: a credential value edited *outside* this app while it is
-///    running would leave a stale cached value scanned until the next
-///    invalidation. In-app edits are safe; the store is per-user either way.
+/// Scanning: for every distinct cached length N, an N-char window slides
+/// across the command line; each window is fingerprinted and compared in
+/// constant time. A match means that credential's exact value occurs verbatim
+/// in the command line.
+///
+/// Freshness: every scan re-enumerates the store (names + LastWritten
+/// timestamps, no values) and re-fingerprints only entries whose timestamp
+/// changed - so edits made OUTSIDE this app (cmdkey, control panel) are
+/// picked up too. In-app writes additionally clear the cache via
+/// CredentialManager.CredentialsChanged as belt-and-braces.
+///
+/// Plaintext exposure: a value is materialized only transiently while being
+/// fingerprinted, in a buffer that is zeroed immediately after hashing.
 /// </summary>
 public static class CredentialCache
 {
-    private static readonly Dictionary<string, SecureString> _cache = new(StringComparer.Ordinal);
+    private sealed record Entry(long LastWritten, int Length, byte[] Mac);
+
+    // Random per-process key; never persisted, dies with the process.
+    private static readonly byte[] HmacKey = RandomNumberGenerator.GetBytes(32);
+
+    private static readonly Dictionary<string, Entry> _cache = new(StringComparer.Ordinal);
     private static readonly object _lock = new();
     private static bool _subscribed;
 
@@ -39,19 +48,28 @@ public static class CredentialCache
             EnsureSubscribed();
             Reconcile();
 
-            foreach (var (name, secure) in _cache)
+            if (_cache.Count == 0 || commandLine.Length == 0)
+                return null;
+
+            Span<byte> windowMac = stackalloc byte[32];
+
+            foreach (var lengthGroup in _cache.GroupBy(kv => kv.Value.Length))
             {
-                var ptr = Marshal.SecureStringToGlobalAllocUnicode(secure);
-                try
+                var n = lengthGroup.Key;
+                if (n == 0 || n > commandLine.Length)
+                    continue;
+
+                for (var i = 0; i + n <= commandLine.Length; i++)
                 {
-                    var plain = Marshal.PtrToStringUni(ptr);
-                    if (!string.IsNullOrEmpty(plain) &&
-                        commandLine.Contains(plain, StringComparison.Ordinal))
-                        return name;
-                }
-                finally
-                {
-                    Marshal.ZeroFreeGlobalAllocUnicode(ptr);
+                    // UTF-16LE bytes of the window, no substring allocation.
+                    var windowBytes = MemoryMarshal.AsBytes(commandLine.AsSpan(i, n));
+                    HMACSHA256.HashData(HmacKey, windowBytes, windowMac);
+
+                    foreach (var kv in lengthGroup)
+                    {
+                        if (CryptographicOperations.FixedTimeEquals(windowMac, kv.Value.Mac))
+                            return kv.Key;
+                    }
                 }
             }
 
@@ -59,46 +77,63 @@ public static class CredentialCache
         }
     }
 
-    /// <summary>Disposes and drops every cached value.</summary>
+    /// <summary>Drops every cached fingerprint.</summary>
     public static void InvalidateAll()
     {
         lock (_lock)
         {
-            foreach (var secure in _cache.Values)
-                secure.Dispose();
             _cache.Clear();
         }
     }
 
     private static void EnsureSubscribed()
     {
-        // Lazy: the cache is empty until first use, so there is nothing stale
-        // to miss before this runs, and the first scan reads current state.
+        // Lazy: the cache is empty until first use, so no change can be
+        // missed before this runs - the first scan reads current state.
         if (_subscribed)
             return;
         CredentialManager.CredentialsChanged += InvalidateAll;
         _subscribed = true;
     }
 
-    // Bring the cache in line with the current set of stored names: evict
-    // entries that no longer exist and read in any that are missing.
+    // Bring the cache in line with the store: evict names that no longer
+    // exist, (re-)fingerprint entries that are new or whose LastWritten
+    // timestamp differs from what we cached.
     private static void Reconcile()
     {
-        var names = CredentialManager.List();
-        var nameSet = new HashSet<string>(names, StringComparer.Ordinal);
+        var current = CredentialManager.ListWithTimestamps();
+        var names = new HashSet<string>(current.Select(c => c.Name), StringComparer.Ordinal);
 
-        foreach (var stale in _cache.Keys.Where(k => !nameSet.Contains(k)).ToList())
-        {
-            _cache[stale].Dispose();
+        foreach (var stale in _cache.Keys.Where(k => !names.Contains(k)).ToList())
             _cache.Remove(stale);
-        }
 
-        foreach (var name in names)
+        foreach (var (name, lastWritten) in current)
         {
-            if (_cache.ContainsKey(name))
+            if (_cache.TryGetValue(name, out var existing) && existing.LastWritten == lastWritten)
                 continue;
+
             if (CredentialManager.TryRead(name, out var secure) && secure is not null)
-                _cache[name] = secure;
+            {
+                _cache[name] = new Entry(lastWritten, secure.Length, Fingerprint(secure));
+                secure.Dispose();
+            }
+        }
+    }
+
+    private static byte[] Fingerprint(SecureString secure)
+    {
+        var ptr = Marshal.SecureStringToGlobalAllocUnicode(secure);
+        try
+        {
+            var bytes = new byte[secure.Length * sizeof(char)];
+            Marshal.Copy(ptr, bytes, 0, bytes.Length);
+            var mac = HMACSHA256.HashData(HmacKey, bytes);
+            CryptographicOperations.ZeroMemory(bytes);
+            return mac;
+        }
+        finally
+        {
+            Marshal.ZeroFreeGlobalAllocUnicode(ptr);
         }
     }
 }
