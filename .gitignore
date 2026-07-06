@@ -12,3 +12,6 @@ obj/
 
 # Local settings (also stored in %AppData%, never a secret, but ignore any stray copies)
 settings.json
+
+# Release artifacts (built by build/release.ps1, published via GitHub Releases)
+dist/
