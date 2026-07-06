@@ -59,22 +59,35 @@ Or open `CredVault.sln` in Visual Studio and run.
 
 ## Built-in guardrails
 
-Three programmatic protections back up the "reference, not value" design so
-a mistake doesn't quietly leak a secret:
+Programmatic protections back up the "reference, not value" design so a
+mistake doesn't quietly leak a secret:
 
 1. **Output redaction.** Every stdout/stderr line from the child is scrubbed
-   of any injected value before it reaches the log. A test script that
-   echoes its own env var (`echo %TEST_DB_PASSWORD%`) shows up as
-   `the password is «redacted»`. See the limit below — this catches whole,
-   contiguous occurrences, not values the script transforms first.
-2. **Command-line secret rejection.** If a selected credential's *literal
-   value* is present in the command line, the launch is refused before the
-   process starts, with an inline error naming the credential. This keeps
-   the value out of the child's command line (which other processes can read
-   via Task Manager / WMI) and out of the persisted command file.
-3. **Env-var name validation.** Credential names are checked to be valid
-   environment-variable names (no `=`, whitespace, or control characters) at
-   save time.
+   of any injected value before it reaches the log (longest value first, so
+   one secret being a substring of another can't leave a partial remnant).
+   A test script that echoes its own env var (`echo %TEST_DB_PASSWORD%`)
+   shows up as `the password is «redacted»`. See the limit below — this
+   catches whole, contiguous occurrences, not values the script transforms
+   first.
+2. **Command-line secret rejection.** If *any stored* credential's literal
+   value is present in the command line (selected or not), the launch is
+   refused before the process starts, with an inline error naming the
+   credential. This keeps the value out of the child's command line (which
+   other processes can read via Task Manager / WMI) and out of the persisted
+   command file. The scan is backed by a fingerprint cache: values are
+   reduced to one-way HMAC-SHA256 fingerprints under a random per-process
+   key — no values are retained in memory, and store timestamps are checked
+   each launch so edits made outside the app (cmdkey, control panel) are
+   picked up.
+3. **Env-var name validation.** Credential names must be valid
+   environment-variable names (no `=`, whitespace, or control characters),
+   and names of loader-/security-sensitive variables (`PATH`, `COMSPEC`,
+   CLR profiler hooks, …) are refused outright.
+4. **Executable search hardening.** The current working directory is removed
+   from the child executable search path (`NoDefaultCurrentDirectoryInExePath`),
+   so a malicious exe dropped in the CWD can't be picked up by a bare command
+   name and handed the injected secrets. Native P/Invoke libraries resolve
+   from System32 only.
 
 ## Security notes / caveats
 

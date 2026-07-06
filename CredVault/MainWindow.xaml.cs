@@ -53,6 +53,7 @@ public partial class MainWindow : Window
         {
             if (!CredentialManager.Save(dialog.CredentialName, dialog.Secret))
                 AppendLog($"failed to save credential '{dialog.CredentialName}'");
+            dialog.Secret.Dispose(); // zero the unmanaged buffer promptly
             ReloadCredentials();
         }
     }
@@ -72,6 +73,7 @@ public partial class MainWindow : Window
                 AppendLog($"failed to update credential '{name}'");
             else
                 AppendLog($"updated credential '{name}'");
+            dialog.Secret.Dispose(); // zero the unmanaged buffer promptly
 
             // Re-read from Credential Manager so the list reflects the store.
             ReloadCredentials();

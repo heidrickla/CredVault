@@ -62,6 +62,17 @@ public partial class AddCredentialWindow : Window
             return;
         }
 
+        // Guardrail: refuse names that would override loader- or
+        // security-sensitive variables in the launched child (executable
+        // resolution, shell selection, .NET/CLR injection hooks).
+        if (ReservedEnvVarNames.Contains(name, StringComparer.OrdinalIgnoreCase))
+        {
+            ShowError($"'{name}' is a reserved Windows/runtime variable - " +
+                      "overriding it in the launched process is dangerous. " +
+                      "Choose a different name.");
+            return;
+        }
+
         CredentialName = name;
         Secret = SecretBox.SecurePassword;
         Secret.MakeReadOnly();
@@ -72,6 +83,17 @@ public partial class AddCredentialWindow : Window
     {
         DialogResult = false;
     }
+
+    // Variables that influence executable/library resolution or allow code
+    // injection into the child process. Not exhaustive - a defense against
+    // accidents, not a sandbox.
+    private static readonly string[] ReservedEnvVarNames =
+    {
+        "PATH", "PATHEXT", "COMSPEC", "SYSTEMROOT", "WINDIR", "TEMP", "TMP",
+        "PSMODULEPATH", "DOTNET_STARTUP_HOOKS",
+        "COR_PROFILER", "COR_ENABLE_PROFILING",
+        "CORECLR_PROFILER", "CORECLR_ENABLE_PROFILING",
+    };
 
     private static bool IsValidEnvVarName(string name)
     {

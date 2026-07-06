@@ -105,6 +105,47 @@ public class ProcessLauncherTests
     }
 
     [Fact]
+    public void Guardrail_detects_a_value_changed_outside_the_app()
+    {
+        using var cred = NewCredentialName();
+        CredentialManager.Save(cred.Name, Secure("first-value-000"));
+
+        // Prime the fingerprint cache with the current value.
+        RunAndCollect("cmd /c exit 0");
+
+        // Overwrite the value OUTSIDE the app: cmdkey does not raise our
+        // in-app change event, so only the LastWritten reconcile can see it.
+        using (var external = Process.Start(new ProcessStartInfo("cmdkey.exe",
+                   $"/generic:CredVault:{cred.Name} /user:test /pass:external-value-777")
+               { UseShellExecute = false, CreateNoWindow = true }))
+        {
+            Assert.True(external!.WaitForExit(10_000));
+            Assert.Equal(0, external.ExitCode);
+        }
+
+        var ex = Assert.Throws<SecretInCommandLineException>(() =>
+            ProcessLauncher.Launch("cmd /c echo external-value-777", Array.Empty<string>(), _ => { }));
+        Assert.Equal(cred.Name, ex.CredentialName);
+    }
+
+    [Fact]
+    public void Redaction_covers_overlapping_secrets_without_partial_leak()
+    {
+        using var shorter = NewCredentialName();
+        using var longer = NewCredentialName();
+        CredentialManager.Save(shorter.Name, Secure("OVERLAP-secret-AAA"));
+        CredentialManager.Save(longer.Name, Secure("OVERLAP-secret-AAA-TAIL-BBB"));
+
+        // Child echoes the LONGER value; if the shorter secret were replaced
+        // first, the tail "-TAIL-BBB" would remain visible in the output.
+        var log = RunAndCollect($"cmd /c echo %{longer.Name}%", shorter.Name, longer.Name);
+
+        Assert.DoesNotContain(log, l => l.Contains("TAIL-BBB"));
+        Assert.DoesNotContain(log, l => l.Contains("OVERLAP-secret-AAA"));
+        Assert.Contains(log, l => l.Contains("«redacted»"));
+    }
+
+    [Fact]
     public void Missing_executable_throws_file_not_found_Win32Exception()
     {
         var ex = Assert.Throws<Win32Exception>(() =>

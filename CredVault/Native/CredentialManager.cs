@@ -64,19 +64,19 @@ public static class CredentialManager
     {
         var targetNamePtr = Marshal.StringToCoTaskMemUni(Prefix + name);
         var userNamePtr = Marshal.StringToCoTaskMemUni(Environment.UserName);
-        var plain = ToPlainString(secret);
-        var secretBytes = Encoding.Unicode.GetBytes(plain);
-        var blobPtr = Marshal.AllocHGlobal(secretBytes.Length);
+
+        // Marshal the secret straight from SecureString into an unmanaged
+        // buffer passed to CredWrite - no intermediate managed string or
+        // byte[] copy is ever created, and the buffer is explicitly zeroed.
+        var blobPtr = Marshal.SecureStringToGlobalAllocUnicode(secret);
 
         try
         {
-            Marshal.Copy(secretBytes, 0, blobPtr, secretBytes.Length);
-
             var credential = new CREDENTIAL
             {
                 Type = CRED_TYPE_GENERIC,
                 TargetName = targetNamePtr,
-                CredentialBlobSize = (uint)secretBytes.Length,
+                CredentialBlobSize = (uint)(secret.Length * sizeof(char)),
                 CredentialBlob = blobPtr,
                 Persist = CRED_PERSIST_LOCAL_MACHINE,
                 UserName = userNamePtr
@@ -89,12 +89,7 @@ public static class CredentialManager
         }
         finally
         {
-            // Best-effort zeroing. Managed strings are immutable and may
-            // still leave copies in GC'd memory until reclaimed - for a
-            // hardened build, replace `plain`/string handling with a
-            // pinned char[] buffer instead.
-            Array.Clear(secretBytes, 0, secretBytes.Length);
-            Marshal.FreeHGlobal(blobPtr);
+            Marshal.ZeroFreeGlobalAllocUnicode(blobPtr);
             Marshal.FreeCoTaskMem(targetNamePtr);
             Marshal.FreeCoTaskMem(userNamePtr);
         }
@@ -110,7 +105,20 @@ public static class CredentialManager
         try
         {
             var credential = Marshal.PtrToStructure<CREDENTIAL>(credPtr);
-            var bytes = new byte[credential.CredentialBlobSize];
+
+            // Defensive: an externally written credential may have a null or
+            // empty blob; treat it as an empty secret instead of faulting.
+            if (credential.CredentialBlob == IntPtr.Zero || credential.CredentialBlobSize == 0)
+            {
+                secret = new SecureString();
+                secret.MakeReadOnly();
+                return true;
+            }
+
+            // Clamp to whole UTF-16 chars in case an external writer stored
+            // an odd byte count.
+            var byteLen = (int)(credential.CredentialBlobSize & ~1u);
+            var bytes = new byte[byteLen];
             Marshal.Copy(credential.CredentialBlob, bytes, 0, bytes.Length);
 
             var chars = Encoding.Unicode.GetChars(bytes);
@@ -140,9 +148,18 @@ public static class CredentialManager
         return Marshal.GetLastWin32Error() == ERROR_NOT_FOUND;
     }
 
-    public static List<string> List()
+    public static List<string> List() =>
+        ListWithTimestamps().Select(e => e.Name).ToList();
+
+    /// <summary>
+    /// Enumerates CredVault credentials with the store's LastWritten
+    /// timestamp (FILETIME). The timestamp lets callers detect writes made
+    /// by other tools (cmdkey, the Credential Manager control panel, etc.)
+    /// without reading any values.
+    /// </summary>
+    public static List<(string Name, long LastWritten)> ListWithTimestamps()
     {
-        var results = new List<string>();
+        var results = new List<(string, long)>();
 
         if (!CredEnumerateW(Prefix + "*", 0, out var count, out var arrayPtr))
             return results;
@@ -156,7 +173,7 @@ public static class CredentialManager
                 var fullName = Marshal.PtrToStringUni(credential.TargetName) ?? string.Empty;
 
                 if (fullName.StartsWith(Prefix, StringComparison.Ordinal))
-                    results.Add(fullName[Prefix.Length..]);
+                    results.Add((fullName[Prefix.Length..], credential.LastWritten));
             }
         }
         finally
@@ -165,18 +182,5 @@ public static class CredentialManager
         }
 
         return results;
-    }
-
-    private static string ToPlainString(SecureString secure)
-    {
-        var ptr = Marshal.SecureStringToGlobalAllocUnicode(secure);
-        try
-        {
-            return Marshal.PtrToStringUni(ptr) ?? string.Empty;
-        }
-        finally
-        {
-            Marshal.ZeroFreeGlobalAllocUnicode(ptr);
-        }
     }
 }
