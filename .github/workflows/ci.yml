@@ -8,17 +8,18 @@ on:
 permissions:
   contents: read
 
-# The forge holds main and GitHub mirrors it; these jobs run on GitHub only.
+# The forge holds main and GitHub mirrors it. The secret scan runs on both; the build needs Windows
+# (net10.0-windows, WPF) and the forge has no Windows runner, so it runs on GitHub only.
 jobs:
   secrets-scan:
     name: Secret scan (gitleaks)
-    if: github.server_url == 'https://github.com'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        timeout-minutes: 10
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_ENABLE_COMMENTS: "false"
