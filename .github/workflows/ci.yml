@@ -8,9 +8,11 @@ on:
 permissions:
   contents: read
 
+# The forge holds main and GitHub mirrors it; these jobs run on GitHub only.
 jobs:
   secrets-scan:
     name: Secret scan (gitleaks)
+    if: github.server_url == 'https://github.com'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -24,6 +26,7 @@ jobs:
 
   build-test:
     name: Build and test
+    if: github.server_url == 'https://github.com'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
