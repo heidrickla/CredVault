@@ -95,7 +95,9 @@ mistake doesn't quietly leak a secret:
 5. **Pinned, verified launch (indirect launch).** Launching is two-phase.
    Before any secret is read, the resolved executable is *pinned* with a
    read handle so it cannot be modified, deleted, or renamed between
-   verification and `CreateProcess` (closing the TOCTOU window); its
+   verification and `CreateProcess` (closing the TOCTOU window). A batch
+   file (`.cmd`, `.bat`) stays pinned until the child exits, because
+   `cmd.exe` reads it line by line while it runs. Its
    SHA-256 is logged and compared against the last launch of the same path,
    prompting for confirmation if the binary changed; and its Authenticode
    signature is checked — a signed image whose digest no longer matches

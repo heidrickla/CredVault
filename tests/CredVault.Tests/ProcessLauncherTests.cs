@@ -192,6 +192,79 @@ public class ProcessLauncherTests
         }
     }
 
+    /// <summary>True once the file opens for writing within the timeout.</summary>
+    private static bool BecomesWritable(string path, int timeoutMs)
+    {
+        var deadline = Environment.TickCount64 + timeoutMs;
+        while (true)
+        {
+            try
+            {
+                File.OpenWrite(path).Dispose();
+                return true;
+            }
+            catch (IOException) when (Environment.TickCount64 < deadline)
+            {
+                Thread.Sleep(100);
+            }
+            catch (IOException)
+            {
+                return false;
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData(@"C:\t\run.cmd", true)]
+    [InlineData(@"C:\t\RUN.BAT", true)]
+    [InlineData(@"C:\t\run.exe", false)]
+    [InlineData(@"C:\t\run.cmd.exe", false)]
+    public void Batch_files_are_recognised_by_extension(string path, bool expected)
+    {
+        Assert.Equal(expected, LaunchPlan.IsBatchPath(path));
+    }
+
+    [Fact]
+    public void A_running_batch_file_stays_pinned_until_the_child_exits()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), $"credvault-batch-{Guid.NewGuid():N}.cmd");
+        File.WriteAllText(temp, "@ping -n 4 127.0.0.1 >nul\r\n");
+        try
+        {
+            var process = ProcessLauncher.Launch($"\"{temp}\"", Array.Empty<string>(), _ => { });
+
+            // cmd.exe reads the batch file as it runs: while the child lives,
+            // nothing may rewrite the lines it has yet to read.
+            Assert.False(process.HasExited, "batch exited before the pin could be checked");
+            Assert.Throws<IOException>(() => File.OpenWrite(temp).Dispose());
+
+            Assert.True(process.WaitForExit(15_000));
+            Assert.True(BecomesWritable(temp, 5_000), "pin not released after the child exited");
+        }
+        finally
+        {
+            File.Delete(temp);
+        }
+    }
+
+    [Fact]
+    public void A_batch_file_that_exits_at_once_is_released()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), $"credvault-batch-{Guid.NewGuid():N}.bat");
+        File.WriteAllText(temp, "@exit 0\r\n");
+        try
+        {
+            var process = ProcessLauncher.Launch($"\"{temp}\"", Array.Empty<string>(), _ => { });
+
+            Assert.True(process.WaitForExit(10_000));
+            Assert.True(BecomesWritable(temp, 5_000), "pin not released after the child exited");
+        }
+        finally
+        {
+            File.Delete(temp);
+        }
+    }
+
     [Fact]
     public void Prepare_refuses_a_tampered_signed_executable()
     {

@@ -51,7 +51,8 @@ public sealed class TamperedExecutableException : Exception
 /// executable: other processes may read/execute it, but nothing can write,
 /// delete, or rename it - closing the check-then-launch (TOCTOU) window
 /// between verification and CreateProcess. Dispose releases the pin; the
-/// launcher releases it automatically once the image is loaded.
+/// launcher releases it once the image is loaded, or for a batch file
+/// (.cmd, .bat) when the child exits.
 /// </summary>
 public sealed class LaunchPlan : IDisposable
 {
@@ -80,6 +81,24 @@ public sealed class LaunchPlan : IDisposable
         _pin?.Dispose();
         _pin = null;
     }
+
+    /// <summary>Hands the pin to the caller, who then owns its disposal.</summary>
+    internal FileStream? TakePin()
+    {
+        var pin = _pin;
+        _pin = null;
+        return pin;
+    }
+
+    /// <summary>
+    /// True for a batch file (.cmd, .bat): cmd.exe reads it line by line
+    /// while it runs, so the loader's image lock never covers it.
+    /// </summary>
+    public bool IsBatchFile => IsBatchPath(ResolvedPath);
+
+    public static bool IsBatchPath(string path) =>
+        Path.GetExtension(path).Equals(".cmd", StringComparison.OrdinalIgnoreCase)
+        || Path.GetExtension(path).Equals(".bat", StringComparison.OrdinalIgnoreCase);
 
     public void Dispose() => ReleasePin();
 }
@@ -239,11 +258,26 @@ public static class ProcessLauncher
         process.OutputDataReceived += (_, e) => OnData(e);
         process.ErrorDataReceived += (_, e) => OnData(e);
 
+        // A batch file is read by cmd.exe as it runs, so its pin is held
+        // until the child exits; the handler is attached before Start.
+        FileStream? heldPin = null;
+        if (plan.IsBatchFile)
+            process.Exited += (_, _) => Interlocked.Exchange(ref heldPin, null)?.Dispose();
+
         process.Start();
 
-        // The loader has mapped the image and keeps it write-locked for the
-        // process lifetime; the plan's pin is no longer needed.
-        plan.ReleasePin();
+        if (plan.IsBatchFile)
+        {
+            Interlocked.Exchange(ref heldPin, plan.TakePin());
+            if (process.HasExited)
+                Interlocked.Exchange(ref heldPin, null)?.Dispose();
+        }
+        else
+        {
+            // The loader has mapped the image and keeps it write-locked for
+            // the process lifetime; the plan's pin is no longer needed.
+            plan.ReleasePin();
+        }
 
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
