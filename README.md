@@ -30,6 +30,9 @@ Code without ever putting real credentials into the chat context window.
   because it is the storage key.
 - **Remove** — deletes from Credential Manager, then re-reads the whole
   list from the store so the UI always mirrors what is actually persisted.
+- **Selection** — every credential starts unchecked, and a launch injects
+  only the checked ones. Add, edit and remove keep the current checks,
+  including none checked; a newly added credential starts unchecked.
 
 ## Launching
 

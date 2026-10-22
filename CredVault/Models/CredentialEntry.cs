@@ -9,7 +9,8 @@ namespace CredVault.Models;
 /// </summary>
 public class CredentialEntry : INotifyPropertyChanged
 {
-    private bool _isSelected = true;
+    // Unchecked until the user checks it: a launch injects only what was chosen.
+    private bool _isSelected;
 
     public string Name { get; set; } = string.Empty;
 

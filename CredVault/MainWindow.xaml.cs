@@ -30,20 +30,12 @@ public partial class MainWindow : Window
 
     private void ReloadCredentials()
     {
-        // Preserve which names were checked across a reload so an edit/remove
-        // doesn't silently reset the user's launch selection.
-        var previouslySelected = _credentials
-            .Where(c => c.IsSelected)
-            .Select(c => c.Name)
-            .ToHashSet(StringComparer.Ordinal);
+        // Keep the user's checks across a reload, including none checked.
+        var rows = CredentialSelection.Rebuild(CredentialManager.List(), _credentials);
 
         _credentials.Clear();
-        foreach (var name in CredentialManager.List())
-            _credentials.Add(new CredentialEntry
-            {
-                Name = name,
-                IsSelected = previouslySelected.Count == 0 || previouslySelected.Contains(name)
-            });
+        foreach (var row in rows)
+            _credentials.Add(row);
     }
 
     private void AddCredential_Click(object sender, RoutedEventArgs e)
