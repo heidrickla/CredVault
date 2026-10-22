@@ -9,10 +9,9 @@
                  anyone can still produce an unsigned build)
               -> zip + SHA-256 into .\dist\
 
-    The default thumbprint is the "Lewis Heidrick Code Signing" certificate
-    issued by the the internal root CA. A thumbprint is
-    public information - the private key lives only in the Windows cert
-    store (DPAPI) and in UCM.
+    The default thumbprint is the "Lewis Heidrick Code Signing" certificate.
+    A thumbprint is public information - the private key lives only in the
+    Windows cert store (DPAPI) and with the issuing CA.
 
 .EXAMPLE
     .\build\release.ps1 -Version v1.0.1
